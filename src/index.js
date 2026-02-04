@@ -69,6 +69,32 @@ function isNightTime(date) {
   return hour >= 20 || hour < 6;
 }
 
+function timeToMinutes(hhmm) {
+  const [hh, mm] = String(hhmm).split(":").map(Number);
+  if (!Number.isFinite(hh) || !Number.isFinite(mm)) return null;
+  return hh * 60 + mm;
+}
+
+function isWithinUnavailableWindow(date, startStr, endStr) {
+  const startMin = timeToMinutes(startStr);
+  const endMin = timeToMinutes(endStr);
+  if (startMin === null || endMin === null) return false;
+  const currentMin = date.getHours() * 60 + date.getMinutes();
+  if (startMin <= endMin) {
+    return currentMin >= startMin && currentMin < endMin;
+  }
+  return currentMin >= startMin || currentMin < endMin;
+}
+
+function estimateDurationMinutes(distanceKm, avgSpeedKmh) {
+  if (!distanceKm || !avgSpeedKmh) return null;
+  return Math.max(5, Math.round((distanceKm / avgSpeedKmh) * 60));
+}
+
+function formatRange(start, end) {
+  return `${start.toLocaleString()} - ${end.toLocaleString()}`;
+}
+
 async function applyDriverDecision(bookingId, decision) {
   const booking = await getBookingById(bookingId);
   if (!booking) return { ok: false, error: `Booking ${bookingId} not found.` };
@@ -148,6 +174,10 @@ app.post("/webhooks/whatsapp", async (req, res) => {
     }
 
     const settings = await getSettings();
+    if (settings.unavailableMode || isWithinUnavailableWindow(bookingRequest.rideDate, settings.unavailableStart, settings.unavailableEnd)) {
+      twiml.message(`Sorry, the driver is unavailable between ${settings.unavailableStart} and ${settings.unavailableEnd}. Please choose another time.`);
+      return res.type("text/xml").send(twiml.toString());
+    }
     if (bookingRequest.passengers > settings.maxPassengers) {
       twiml.message(`Sorry, maximum passengers is ${settings.maxPassengers}. Please adjust and resend.`);
       return res.type("text/xml").send(twiml.toString());
@@ -158,6 +188,7 @@ app.post("/webhooks/whatsapp", async (req, res) => {
       : Number(process.env.DEFAULT_TRIP_DISTANCE_KM || 5);
 
     let estimatedPickupMinutes = estimatePickupMinutes({ driverDistanceKm: bookingRequest.driverDistanceKm });
+    let travelMinutes = null;
 
     try {
       const driverLocation = await getDriverLocation();
@@ -184,9 +215,33 @@ app.post("/webhooks/whatsapp", async (req, res) => {
         if (tripMetrics?.distanceKm) {
           distanceKm = tripMetrics.distanceKm;
         }
+        if (tripMetrics?.durationMinutes) {
+          travelMinutes = tripMetrics.durationMinutes;
+        }
       }
     } catch (error) {
       console.warn("Maps lookup failed, using defaults.", error.message);
+    }
+
+    if (!travelMinutes) {
+      travelMinutes = estimateDurationMinutes(distanceKm, Number(process.env.AVG_SPEED_KMH || 25));
+    }
+    const rideEndDateTime = new Date(bookingRequest.rideDate.getTime() + ((travelMinutes || 0) + bookingRequest.waitingMinutes) * 60000);
+
+    const acceptedBookings = await listBookings("accepted");
+    const requestedStart = bookingRequest.rideDate;
+    const requestedEnd = rideEndDateTime;
+    const conflict = acceptedBookings.find((b) => {
+      if (!b.ride_end_datetime) return false;
+      const start = new Date(b.ride_datetime);
+      const end = new Date(b.ride_end_datetime);
+      return requestedStart < end && requestedEnd > start;
+    });
+    if (conflict) {
+      const start = new Date(conflict.ride_datetime);
+      const end = new Date(conflict.ride_end_datetime);
+      twiml.message(`Sorry, that time is not available. Already accepted ${formatRange(start, end)}.`);
+      return res.type("text/xml").send(twiml.toString());
     }
     const fare = calculateFare({
       distanceKm,
@@ -205,6 +260,8 @@ app.post("/webhooks/whatsapp", async (req, res) => {
       passengers: bookingRequest.passengers,
       waitingMinutes: bookingRequest.waitingMinutes,
       distanceKm,
+      rideDurationMinutes: travelMinutes,
+      rideEndDateTime: rideEndDateTime.toISOString(),
       estimatedPickupMinutes,
       fareAmount: fare.total,
       currency: fare.currency,
@@ -294,6 +351,10 @@ app.post("/book/submit", async (req, res) => {
       return res.status(400).type("text/html").send(bookingErrorHtml("Please fill in all required fields or use GPS for pickup/dropoff."));
     }
 
+    if (settings.unavailableMode || isWithinUnavailableWindow(new Date(`${date} ${time}`), settings.unavailableStart, settings.unavailableEnd)) {
+      return res.status(400).type("text/html").send(bookingErrorHtml(`Driver is unavailable between ${settings.unavailableStart} and ${settings.unavailableEnd}. Please choose another time.`));
+    }
+
     if (passengers > settings.maxPassengers) {
       return res.status(400).type("text/html").send(bookingErrorHtml(`Maximum passengers is ${settings.maxPassengers}.`));
     }
@@ -309,6 +370,7 @@ app.post("/book/submit", async (req, res) => {
     let distanceLocked = false;
 
     let estimatedPickupMinutes = estimatePickupMinutes({ driverDistanceKm: Number(process.env.DEFAULT_PICKUP_DISTANCE_KM || 5) });
+    let travelMinutes = null;
 
     const pickupDestination = Number.isFinite(pickupLat) && pickupLat !== 0 && Number.isFinite(pickupLng) && pickupLng !== 0
       ? `${pickupLat},${pickupLng}`
@@ -350,6 +412,9 @@ app.post("/book/submit", async (req, res) => {
         if (tripMetrics?.distanceKm) {
           distanceKm = tripMetrics.distanceKm;
         }
+        if (tripMetrics?.durationMinutes) {
+          travelMinutes = tripMetrics.durationMinutes;
+        }
       }
     } catch (error) {
       console.warn("Maps lookup failed for booking form, using defaults.", error.message);
@@ -373,6 +438,26 @@ app.post("/book/submit", async (req, res) => {
     }
 
     const pricedDistanceKm = waitingReturn ? distanceKm * settings.returnTripMultiplier : distanceKm;
+    if (!travelMinutes) {
+      travelMinutes = estimateDurationMinutes(distanceKm, Number(process.env.AVG_SPEED_KMH || 25));
+    }
+
+    const totalDuration = (travelMinutes || 0) + (waitingReturn ? Number(waitingMinutes || 0) : 0) + (waitingReturn ? (travelMinutes || 0) : 0);
+    const rideEndDateTime = new Date(rideDate.getTime() + totalDuration * 60000);
+
+    const acceptedBookings = await listBookings("accepted");
+    const conflict = acceptedBookings.find((b) => {
+      if (!b.ride_end_datetime) return false;
+      const start = new Date(b.ride_datetime);
+      const end = new Date(b.ride_end_datetime);
+      return rideDate < end && rideEndDateTime > start;
+    });
+    if (conflict) {
+      const start = new Date(conflict.ride_datetime);
+      const end = new Date(conflict.ride_end_datetime);
+      return res.status(400).type("text/html").send(bookingErrorHtml(`That time is not available. Already accepted ${formatRange(start, end)}.`));
+    }
+
     const fare = calculateFare({
       distanceKm: pricedDistanceKm,
       rideDate,
@@ -408,6 +493,8 @@ app.post("/book/submit", async (req, res) => {
       passengers,
       waitingMinutes,
       distanceKm: pricedDistanceKm,
+      rideDurationMinutes: totalDuration,
+      rideEndDateTime: rideEndDateTime.toISOString(),
       estimatedPickupMinutes,
       fareAmount: fare.total,
       currency: fare.currency,
@@ -498,6 +585,20 @@ app.post("/api/route", async (req, res) => {
     }
 
     const arrivalTime = pickupEtaMinutes ? new Date(Date.now() + pickupEtaMinutes * 60000) : null;
+
+    let driverAddress = null;
+    if (liveDriver?.lat && liveDriver?.lng) {
+      try {
+        driverAddress = await reverseGeocode(liveDriver.lat, liveDriver.lng);
+      } catch (error) {
+        driverAddress = null;
+      }
+    }
+
+    const now = new Date();
+    const accepted = await listBookings("accepted");
+    const currentRide = accepted.find((b) => b.ride_end_datetime && now >= new Date(b.ride_datetime) && now <= new Date(b.ride_end_datetime));
+    const driverStatus = currentRide ? "currently_in_ride" : "available";
     const pricedDistanceKm = waitingReturn ? distanceKm * settings.returnTripMultiplier : distanceKm;
     const nightApplied = isNightTime(rideDate);
     const perKmApplied = nightApplied
@@ -538,7 +639,10 @@ app.post("/api/route", async (req, res) => {
       perKmApplied,
       perKmLabel: nightApplied ? "Night rate" : "Standard rate",
       pickupAddress,
-      dropoffAddress
+      dropoffAddress,
+      driverLocation: liveDriver?.lat && liveDriver?.lng ? { lat: liveDriver.lat, lng: liveDriver.lng } : null,
+      driverAddress,
+      driverStatus
     });
   } catch (error) {
     return res.json({ ok: false });
@@ -555,8 +659,8 @@ app.get("/settings", async (req, res) => {
       <meta name="viewport" content="width=device-width, initial-scale=1" />
       <title>Pricing Settings</title>
       <style>
-        body { font-family: "Work Sans", "Segoe UI", sans-serif; background: #f6f4ef; color: #1b1b1b; padding: 24px; }
-        .card { background: white; padding: 20px; border-radius: 16px; box-shadow: 0 12px 40px rgba(27,27,27,0.08); max-width: 640px; margin: 0 auto; }
+        body { font-family: "Work Sans", "Segoe UI", sans-serif; background: #f6f4ef; color: #1b1b1b; padding: 16px; }
+        .card { background: transparent; padding: 0; border-radius: 0; box-shadow: none; max-width: 720px; margin: 0 auto; }
         label { display: block; margin-top: 12px; font-weight: 600; }
         input { width: 100%; padding: 12px 14px; margin-top: 6px; border-radius: 10px; border: 1px solid #dedbd2; font-size: 16px; }
         button { margin-top: 18px; padding: 12px 18px; border-radius: 999px; border: none; background: #1f2a44; color: white; font-weight: 700; cursor: pointer; width: 100%; }
@@ -564,7 +668,6 @@ app.get("/settings", async (req, res) => {
         a { color: #f05a28; font-weight: 600; text-decoration: none; }
         @media (max-width: 720px) {
           body { padding: 16px; }
-          .card { padding: 18px; }
         }
       </style>
     </head>
@@ -572,7 +675,7 @@ app.get("/settings", async (req, res) => {
       <div class="card">
         <h1>Pricing Settings (Mauritius)</h1>
         ${saved ? '<p class="pill">Saved successfully</p>' : ''}
-        <p><a href="/">Back to Home</a></p>
+        <p><a href="/">Home</a></p>
         <form method="post" action="/settings">
           <label>Currency</label>
           <input name="currency" value="${settings.currency}" required />
@@ -595,6 +698,15 @@ app.get("/settings", async (req, res) => {
           <label>Max Passengers</label>
           <input name="maxPassengers" type="number" min="1" max="4" value="${settings.maxPassengers}" required />
 
+          <label>Unavailable Mode</label>
+          <input type="checkbox" name="unavailableMode" value="1" ${settings.unavailableMode ? "checked" : ""} />
+
+          <label>Daily Unavailable Start</label>
+          <input type="time" name="unavailableStart" value="${settings.unavailableStart}" required />
+
+          <label>Daily Unavailable End</label>
+          <input type="time" name="unavailableEnd" value="${settings.unavailableEnd}" required />
+
           <button type="submit">Save Settings</button>
         </form>
       </div>
@@ -610,7 +722,10 @@ app.post("/settings", async (req, res) => {
     waitingPerMinute: Number(req.body.waitingPerMinute || 0),
     returnTripMultiplier: Number(req.body.returnTripMultiplier || 2),
     nightSurchargePercent: Number(req.body.nightSurchargePercent || 0),
-    maxPassengers: Math.min(4, Number(req.body.maxPassengers || 4))
+    maxPassengers: Math.min(4, Number(req.body.maxPassengers || 4)),
+    unavailableMode: req.body.unavailableMode ? "true" : "false",
+    unavailableStart: String(req.body.unavailableStart || "20:00"),
+    unavailableEnd: String(req.body.unavailableEnd || "06:00")
   });
   res.redirect("/settings?saved=1");
 });
@@ -721,6 +836,16 @@ app.get("/api/driver/eta/:id", async (req, res) => {
   } catch (error) {
     return res.json({ ok: false });
   }
+});
+
+app.get("/api/driver/status", async (req, res) => {
+  const now = new Date();
+  const accepted = await listBookings("accepted");
+  const current = accepted.find((b) => b.ride_end_datetime && now >= new Date(b.ride_datetime) && now <= new Date(b.ride_end_datetime));
+  if (current) {
+    return res.json({ ok: true, status: "currently_in_ride", bookingId: current.id });
+  }
+  return res.json({ ok: true, status: "available" });
 });
 
 app.get("/track/:id", async (req, res) => {

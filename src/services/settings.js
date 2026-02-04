@@ -21,7 +21,10 @@ async function getSettings() {
     extraPassengerPercent: toNumber(map.extraPassengerPercent, pricingDefaults.extraPassengerPercent),
     maxPassengers: toNumber(map.maxPassengers, pricingDefaults.maxPassengers),
     returnTripMultiplier: toNumber(map.returnTripMultiplier, pricingDefaults.returnTripMultiplier),
-    nightSurchargePercent: toNumber(map.nightSurchargePercent, pricingDefaults.nightSurchargePercent)
+    nightSurchargePercent: toNumber(map.nightSurchargePercent, pricingDefaults.nightSurchargePercent),
+    unavailableMode: map.unavailableMode === "true",
+    unavailableStart: map.unavailableStart || "20:00",
+    unavailableEnd: map.unavailableEnd || "06:00"
   };
 }
 

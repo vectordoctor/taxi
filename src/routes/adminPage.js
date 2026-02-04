@@ -85,6 +85,31 @@ function adminPageHtml() {
       text-align: center;
       color: #6b6b6b;
     }
+    .calendar-title {
+      margin: 8px 0 12px;
+      font-size: 18px;
+      color: #1f2a44;
+    }
+    .calendar-card {
+      background: white;
+      border-radius: 14px;
+      padding: 12px 14px;
+      margin-bottom: 10px;
+      box-shadow: 0 8px 24px rgba(27, 27, 27, 0.08);
+    }
+    .calendar-date {
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+    .calendar-row {
+      display: grid;
+      gap: 4px;
+      padding: 8px 0;
+      border-bottom: 1px solid #eceae4;
+    }
+    .calendar-row:last-child { border-bottom: none; }
+    .calendar-time { font-weight: 600; color: #1f2a44; }
+    .calendar-loc { color: #6b6b6b; font-size: 13px; }
     @media (max-width: 900px) {
       header { padding: 20px; }
       main { padding: 16px; }
@@ -118,6 +143,7 @@ function adminPageHtml() {
       </select>
       <span id="updated"></span>
     </div>
+    <div id="calendar"></div>
     <div id="tableWrap"></div>
   </main>
 
@@ -128,6 +154,7 @@ function adminPageHtml() {
     const refreshBtn = document.getElementById('refresh');
     const createTestBtn = document.getElementById('createTest');
     const driverLocationBtn = document.getElementById('driverLocation');
+    const calendar = document.getElementById('calendar');
 
     async function fetchBookings() {
       const status = statusFilter.value;
@@ -135,6 +162,7 @@ function adminPageHtml() {
       const res = await fetch(url);
       const data = await res.json();
       renderTable(data);
+      renderCalendar(data.filter(b => b.status === 'accepted'));
       updated.textContent = 'Updated ' + new Date().toLocaleTimeString();
     }
 
@@ -189,6 +217,36 @@ function adminPageHtml() {
           rows +
         '</tbody>' +
       '</table>';
+    }
+
+    function renderCalendar(bookings) {
+      if (!bookings.length) {
+        calendar.innerHTML = '<div class="empty">No accepted rides yet.</div>';
+        return;
+      }
+      const groups = {};
+      bookings.forEach(b => {
+        const date = new Date(b.ride_datetime).toLocaleDateString();
+        const start = new Date(b.ride_datetime).toLocaleTimeString();
+        const end = b.ride_end_datetime ? new Date(b.ride_end_datetime).toLocaleTimeString() : '--';
+        if (!groups[date]) groups[date] = [];
+        groups[date].push({ id: b.id, start, end, pickup: b.pickup_location, dropoff: b.dropoff_location });
+      });
+
+      const cards = Object.keys(groups).map(date => {
+        const rows = groups[date].map(item =>
+          '<div class="calendar-row">' +
+            '<div class="calendar-time">#' + item.id + ' • ' + item.start + ' - ' + item.end + '</div>' +
+            '<div class="calendar-loc">' + item.pickup + ' → ' + item.dropoff + '</div>' +
+          '</div>'
+        ).join('');
+        return '<div class="calendar-card">' +
+          '<div class="calendar-date">' + date + '</div>' +
+          rows +
+        '</div>';
+      }).join('');
+
+      calendar.innerHTML = '<h2 class="calendar-title">Accepted Rides Calendar</h2>' + cards;
     }
 
     refreshBtn.addEventListener('click', fetchBookings);

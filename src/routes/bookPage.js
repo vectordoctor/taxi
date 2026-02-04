@@ -47,6 +47,9 @@ function bookingPageHtml(options) {
       <input type="hidden" name="dropoff_lng" />
       <div class="row">
         <button type="button" id="useLocation" class="ghost">Use My GPS Location</button>
+        <button type="button" id="setPickup" class="ghost">Set Pickup Pin</button>
+      </div>
+      <div class="row">
         <button type="button" id="setDropoff" class="ghost">Set Dropoff Pin</button>
       </div>
       <div id="map"></div>
@@ -59,16 +62,24 @@ function bookingPageHtml(options) {
         <table class="breakdown-table">
           <tbody>
             <tr>
+              <th>Driver Location</th>
+              <td id="bd-driver">--</td>
+            </tr>
+            <tr>
+              <th>Driver Status</th>
+              <td id="bd-status">--</td>
+            </tr>
+            <tr>
+              <th>Pickup ETA</th>
+              <td id="bd-eta">--</td>
+            </tr>
+            <tr>
               <th>Fare</th>
               <td id="bd-fare">--</td>
             </tr>
             <tr>
               <th>Travel Time</th>
               <td id="bd-travel">--</td>
-            </tr>
-            <tr>
-              <th>Pickup ETA</th>
-              <td id="bd-eta">--</td>
             </tr>
             <tr>
               <th>Per KM Applied</th>
@@ -137,9 +148,14 @@ function bookingPageHtml(options) {
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script>
     const useLocationBtn = document.getElementById('useLocation');
+    const setPickupBtn = document.getElementById('setPickup');
     const setDropoffBtn = document.getElementById('setDropoff');
     const pinHint = document.getElementById('pinHint');
     const estimate = document.getElementById('estimate');
+    const statusEl = document.createElement('div');
+    statusEl.className = 'pill';
+    statusEl.textContent = 'Driver status: checking...';
+    estimate.parentNode.insertBefore(statusEl, estimate);
     const pickupLatInput = document.querySelector('input[name=\"pickup_lat\"]');
     const pickupLngInput = document.querySelector('input[name=\"pickup_lng\"]');
     const dropoffLatInput = document.querySelector('input[name=\"dropoff_lat\"]');
@@ -206,9 +222,13 @@ function bookingPageHtml(options) {
             estimate.textContent = 'Distance: ' + data.distanceKm.toFixed(2) + ' km | Fare: ' + data.currency + ' ' + data.total.toFixed(2) + travel + eta + arrival;
             distanceInput.value = data.distanceKm.toFixed(2);
             drawRoute(data.geometry);
+            document.getElementById('bd-driver').textContent = data.driverAddress || '--';
+            document.getElementById('bd-status').textContent = data.driverStatus === 'currently_in_ride' ? 'Currently in Ride' : 'Available';
+            document.getElementById('bd-eta').textContent = data.pickupEtaMinutes
+              ? (data.pickupEtaMinutes + ' min' + (data.arrivalTimeIso ? ' (Arrive ' + new Date(data.arrivalTimeIso).toLocaleTimeString() + ')' : ''))
+              : '--';
             document.getElementById('bd-fare').textContent = data.currency + ' ' + data.total.toFixed(2);
             document.getElementById('bd-travel').textContent = data.travelMinutes ? data.travelMinutes + ' min' : '--';
-            document.getElementById('bd-eta').textContent = data.pickupEtaMinutes ? data.pickupEtaMinutes + ' min' : '--';
             document.getElementById('bd-perkm').textContent = data.currency + ' ' + data.perKmApplied.toFixed(2) + ' (' + data.perKmLabel + ')';
             document.getElementById('bd-distance').textContent = data.distanceKm.toFixed(2) + ' km';
             document.getElementById('bd-waiting').textContent = String(data.waitingMinutes || 0);
@@ -219,9 +239,11 @@ function bookingPageHtml(options) {
             estimate.textContent = 'Distance: -- km | Fare: --';
             distanceInput.value = '';
             drawRoute(null);
+            document.getElementById('bd-driver').textContent = '--';
+            document.getElementById('bd-status').textContent = '--';
+            document.getElementById('bd-eta').textContent = '--';
             document.getElementById('bd-fare').textContent = '--';
             document.getElementById('bd-travel').textContent = '--';
-            document.getElementById('bd-eta').textContent = '--';
             document.getElementById('bd-perkm').textContent = '--';
             document.getElementById('bd-distance').textContent = '--';
             document.getElementById('bd-waiting').textContent = '--';
@@ -234,9 +256,11 @@ function bookingPageHtml(options) {
           estimate.textContent = 'Distance: -- km | Fare: --';
           distanceInput.value = '';
           drawRoute(null);
+          document.getElementById('bd-driver').textContent = '--';
+          document.getElementById('bd-status').textContent = '--';
+          document.getElementById('bd-eta').textContent = '--';
           document.getElementById('bd-fare').textContent = '--';
           document.getElementById('bd-travel').textContent = '--';
-          document.getElementById('bd-eta').textContent = '--';
           document.getElementById('bd-perkm').textContent = '--';
           document.getElementById('bd-distance').textContent = '--';
           document.getElementById('bd-waiting').textContent = '--';
@@ -282,6 +306,17 @@ function bookingPageHtml(options) {
       }
     }
 
+    async function refreshDriverStatus() {
+      const res = await fetch('/api/driver/status');
+      const data = await res.json();
+      if (!data.ok) return;
+      if (data.status === 'currently_in_ride') {
+        statusEl.textContent = 'Driver status: Currently in Ride';
+      } else {
+        statusEl.textContent = 'Driver status: Available';
+      }
+    }
+
     useLocationBtn.addEventListener('click', function () {
       if (!navigator.geolocation) {
         alert('Geolocation is not supported by your browser.');
@@ -301,6 +336,11 @@ function bookingPageHtml(options) {
       pinHint.textContent = 'Click the map to place dropoff pin';
     });
 
+    setPickupBtn.addEventListener('click', function () {
+      activePin = 'pickup';
+      pinHint.textContent = 'Click the map to place pickup pin';
+    });
+
     ['input[name=\"passengers\"]', 'input[name=\"waiting\"]', 'input[name=\"date\"]', 'input[name=\"time\"]', 'input[name=\"waiting_return\"]'].forEach(function (selector) {
       document.querySelector(selector).addEventListener('change', updateEstimate);
     });
@@ -317,6 +357,8 @@ function bookingPageHtml(options) {
 
     refreshDriverLocation();
     setInterval(refreshDriverLocation, 5000);
+    refreshDriverStatus();
+    setInterval(refreshDriverStatus, 15000);
   </script>
 </body>
 </html>`;

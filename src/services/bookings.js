@@ -6,10 +6,10 @@ async function createBooking(data) {
   const result = await db.run(
     `INSERT INTO bookings (
       customer_number, customer_name, pickup_location, pickup_lat, pickup_lng, dropoff_location, dropoff_lat, dropoff_lng, waiting_return,
-      ride_datetime, passengers, waiting_minutes, distance_km,
+      ride_datetime, passengers, waiting_minutes, distance_km, ride_duration_minutes, ride_end_datetime,
       estimated_pickup_minutes, fare_amount, currency, status,
       driver_response, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   , [
       data.customerNumber,
       data.customerName,
@@ -24,6 +24,8 @@ async function createBooking(data) {
       data.passengers,
       data.waitingMinutes,
       data.distanceKm,
+      data.rideDurationMinutes || null,
+      data.rideEndDateTime || null,
       data.estimatedPickupMinutes,
       data.fareAmount,
       data.currency,

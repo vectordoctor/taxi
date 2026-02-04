@@ -24,6 +24,8 @@ async function getDb() {
         dropoff_lat REAL,
         dropoff_lng REAL,
         waiting_return INTEGER NOT NULL DEFAULT 0,
+        ride_duration_minutes INTEGER,
+        ride_end_datetime TEXT,
         dropoff_location TEXT NOT NULL,
         ride_datetime TEXT NOT NULL,
         passengers INTEGER NOT NULL,
@@ -56,6 +58,8 @@ async function getDb() {
     await ensureColumn(db, "bookings", "dropoff_lat", "REAL");
     await ensureColumn(db, "bookings", "dropoff_lng", "REAL");
     await ensureColumn(db, "bookings", "waiting_return", "INTEGER");
+    await ensureColumn(db, "bookings", "ride_duration_minutes", "INTEGER");
+    await ensureColumn(db, "bookings", "ride_end_datetime", "TEXT");
   }
   return dbPromise;
 }
