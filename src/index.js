@@ -23,7 +23,7 @@ const { bookingPageHtml, bookingResultHtml, bookingErrorHtml } = require("./rout
 
 const app = express();
 const port = process.env.PORT || 3000;
-const host = process.env.HOST || "127.0.0.1";
+const host = process.env.HOST || (process.env.RENDER ? "0.0.0.0" : "127.0.0.1");
 
 app.use(express.urlencoded({ extended: false }));
 app.use(express.json());
