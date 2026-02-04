@@ -7,8 +7,8 @@ function bookingPageHtml(options) {
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Book a Ride</title>
   <style>
-    body { font-family: "Work Sans", "Segoe UI", sans-serif; background: #f6f4ef; color: #1b1b1b; padding: 20px; }
-    .card { background: white; padding: 22px; border-radius: 16px; box-shadow: 0 12px 40px rgba(27,27,27,0.08); max-width: 720px; margin: 0 auto; }
+    body { font-family: "Work Sans", "Segoe UI", sans-serif; background: #f6f4ef; color: #1b1b1b; padding: 16px; }
+    .card { background: transparent; padding: 0; border-radius: 0; box-shadow: none; max-width: 720px; margin: 0 auto; }
     label { display: block; margin-top: 12px; font-weight: 600; }
     input, textarea { width: 100%; padding: 12px 14px; margin-top: 6px; border-radius: 10px; border: 1px solid #dedbd2; font-size: 16px; }
     .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
@@ -23,8 +23,7 @@ function bookingPageHtml(options) {
     .breakdown-table th { text-transform: uppercase; letter-spacing: 0.08em; font-size: 11px; color: #8b3b1c; width: 40%; }
     .breakdown-table tbody tr:last-child td { border-bottom: none; }
     @media (max-width: 720px) {
-      body { padding: 14px; }
-      .card { padding: 18px; }
+      body { padding: 12px; }
       .row { grid-template-columns: 1fr; }
       #map { height: 220px; }
       button { width: 100%; }
@@ -99,16 +98,11 @@ function bookingPageHtml(options) {
         </table>
       </div>
 
-      <div class="row">
-        <div>
-          <label>Date</label>
-          <input type="date" name="date" required />
-        </div>
-        <div>
-          <label>Time</label>
-          <input type="time" name="time" required />
-        </div>
-      </div>
+      <label>Date</label>
+      <input type="date" name="date" required />
+
+      <label>Time</label>
+      <input type="time" name="time" required />
 
       <div class="row">
         <div>
