@@ -243,9 +243,13 @@ app.get("/", (req, res) => {
       <meta name="viewport" content="width=device-width, initial-scale=1" />
       <title>Taxi Booking Server</title>
       <style>
-        body { font-family: "Work Sans", "Segoe UI", sans-serif; background: #f6f4ef; color: #1b1b1b; padding: 40px; }
-        .card { background: white; padding: 24px; border-radius: 16px; box-shadow: 0 12px 40px rgba(27,27,27,0.08); max-width: 520px; }
+        body { font-family: "Work Sans", "Segoe UI", sans-serif; background: #f6f4ef; color: #1b1b1b; padding: 24px; }
+        .card { background: white; padding: 20px; border-radius: 16px; box-shadow: 0 12px 40px rgba(27,27,27,0.08); max-width: 520px; }
         a { color: #f05a28; font-weight: 600; text-decoration: none; }
+        @media (max-width: 720px) {
+          body { padding: 16px; }
+          .card { padding: 18px; }
+        }
       </style>
     </head>
     <body>
@@ -551,13 +555,17 @@ app.get("/settings", async (req, res) => {
       <meta name="viewport" content="width=device-width, initial-scale=1" />
       <title>Pricing Settings</title>
       <style>
-        body { font-family: "Work Sans", "Segoe UI", sans-serif; background: #f6f4ef; color: #1b1b1b; padding: 32px; }
-        .card { background: white; padding: 24px; border-radius: 16px; box-shadow: 0 12px 40px rgba(27,27,27,0.08); max-width: 640px; margin: 0 auto; }
+        body { font-family: "Work Sans", "Segoe UI", sans-serif; background: #f6f4ef; color: #1b1b1b; padding: 24px; }
+        .card { background: white; padding: 20px; border-radius: 16px; box-shadow: 0 12px 40px rgba(27,27,27,0.08); max-width: 640px; margin: 0 auto; }
         label { display: block; margin-top: 12px; font-weight: 600; }
-        input { width: 100%; padding: 10px 12px; margin-top: 6px; border-radius: 10px; border: 1px solid #dedbd2; font-size: 14px; }
-        button { margin-top: 18px; padding: 12px 18px; border-radius: 999px; border: none; background: #1f2a44; color: white; font-weight: 700; cursor: pointer; }
+        input { width: 100%; padding: 12px 14px; margin-top: 6px; border-radius: 10px; border: 1px solid #dedbd2; font-size: 16px; }
+        button { margin-top: 18px; padding: 12px 18px; border-radius: 999px; border: none; background: #1f2a44; color: white; font-weight: 700; cursor: pointer; width: 100%; }
         .pill { display: inline-flex; padding: 6px 12px; border-radius: 999px; background: #e6f4ea; color: #1f7a3f; font-weight: 600; font-size: 12px; }
         a { color: #f05a28; font-weight: 600; text-decoration: none; }
+        @media (max-width: 720px) {
+          body { padding: 16px; }
+          .card { padding: 18px; }
+        }
       </style>
     </head>
     <body>

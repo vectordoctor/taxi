@@ -21,7 +21,7 @@ function adminPageHtml() {
       color: #f6f4ef;
     }
     main {
-      padding: 24px 32px 48px;
+      padding: 24px 24px 48px;
     }
     .toolbar {
       display: flex;
@@ -85,6 +85,18 @@ function adminPageHtml() {
       text-align: center;
       color: #6b6b6b;
     }
+    @media (max-width: 900px) {
+      header { padding: 20px; }
+      main { padding: 16px; }
+      .toolbar { gap: 8px; }
+      button, select { width: 100%; }
+      table, thead, tbody, th, td, tr { display: block; }
+      thead { display: none; }
+      tr { border-bottom: 1px solid #eceae4; padding: 12px 0; }
+      td { border: none; display: flex; justify-content: space-between; padding: 8px 12px; }
+      td::before { content: attr(data-label); font-weight: 700; color: #1f2a44; }
+      .actions { justify-content: flex-start; }
+    }
   </style>
 </head>
 <body>
@@ -138,16 +150,16 @@ function adminPageHtml() {
       }
       const rows = bookings.map(function (b) {
         return '<tr>' +
-          '<td>#' + b.id + '</td>' +
-          '<td><span class="status ' + b.status + '">' + b.status + '</span></td>' +
-          '<td>' + (b.customer_name || '') + '<br/>' + b.customer_number + '</td>' +
-          '<td>' + b.pickup_location + '</td>' +
-          '<td>' + b.dropoff_location + '</td>' +
-          '<td>' + new Date(b.ride_datetime).toLocaleString() + '</td>' +
-          '<td>' + b.passengers + '</td>' +
-          '<td>' + b.currency + ' ' + Number(b.fare_amount).toFixed(2) + '</td>' +
-          '<td>' + b.estimated_pickup_minutes + ' min</td>' +
-          '<td>' + (b.waiting_return ? 'Yes' : 'No') + '</td>' +
+          '<td data-label="ID">#' + b.id + '</td>' +
+          '<td data-label="Status"><span class="status ' + b.status + '">' + b.status + '</span></td>' +
+          '<td data-label="Customer">' + (b.customer_name || '') + '<br/>' + b.customer_number + '</td>' +
+          '<td data-label="Pickup">' + b.pickup_location + '</td>' +
+          '<td data-label="Dropoff">' + b.dropoff_location + '</td>' +
+          '<td data-label="Date/Time">' + new Date(b.ride_datetime).toLocaleString() + '</td>' +
+          '<td data-label="Pax">' + b.passengers + '</td>' +
+          '<td data-label="Fare">' + b.currency + ' ' + Number(b.fare_amount).toFixed(2) + '</td>' +
+          '<td data-label="Pickup ETA">' + b.estimated_pickup_minutes + ' min</td>' +
+          '<td data-label="Return">' + (b.waiting_return ? 'Yes' : 'No') + '</td>' +
           '<td>' +
             '<div class="actions">' +
               '<button class="ghost" onclick="updateStatus(' + b.id + ', \\'accept\\')">Accept</button>' +
