@@ -24,7 +24,8 @@ async function getSettings() {
     nightSurchargePercent: toNumber(map.nightSurchargePercent, pricingDefaults.nightSurchargePercent),
     unavailableMode: map.unavailableMode === "true",
     unavailableStart: map.unavailableStart || "20:00",
-    unavailableEnd: map.unavailableEnd || "06:00"
+    unavailableEnd: map.unavailableEnd || "06:00",
+    driverOnline: map.driverOnline === "true"
   };
 }
 

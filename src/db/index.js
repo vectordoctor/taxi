@@ -16,6 +16,7 @@ async function getDb() {
     await db.exec(`
       CREATE TABLE IF NOT EXISTS bookings (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
+        customer_id INTEGER,
         customer_number TEXT NOT NULL,
         customer_name TEXT,
         pickup_location TEXT NOT NULL,
@@ -51,6 +52,14 @@ async function getDb() {
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
       );
+
+      CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        email TEXT NOT NULL UNIQUE,
+        password_hash TEXT NOT NULL,
+        role TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
     `);
 
     await ensureColumn(db, "bookings", "pickup_lat", "REAL");
@@ -60,6 +69,7 @@ async function getDb() {
     await ensureColumn(db, "bookings", "waiting_return", "INTEGER");
     await ensureColumn(db, "bookings", "ride_duration_minutes", "INTEGER");
     await ensureColumn(db, "bookings", "ride_end_datetime", "TEXT");
+    await ensureColumn(db, "bookings", "customer_id", "INTEGER");
   }
   return dbPromise;
 }

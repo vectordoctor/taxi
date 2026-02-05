@@ -6,7 +6,7 @@ function toNumber(value, fallback) {
 module.exports = {
   currency: process.env.CURRENCY || "MUR",
   baseFare: toNumber(process.env.BASE_FARE, 4.0),
-  perKm: toNumber(process.env.PRICE_PER_KM, 90),
+  perKm: toNumber(process.env.PRICE_PER_KM, 55),
   perMinute: toNumber(process.env.PRICE_PER_MINUTE, 0.35),
   nightSurchargePercent: toNumber(process.env.NIGHT_SURCHARGE_PERCENT, 20),
   weekendSurchargePercent: toNumber(process.env.WEEKEND_SURCHARGE_PERCENT, 10),

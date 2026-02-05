@@ -5,12 +5,13 @@ async function createBooking(data) {
   const now = new Date().toISOString();
   const result = await db.run(
     `INSERT INTO bookings (
-      customer_number, customer_name, pickup_location, pickup_lat, pickup_lng, dropoff_location, dropoff_lat, dropoff_lng, waiting_return,
+      customer_id, customer_number, customer_name, pickup_location, pickup_lat, pickup_lng, dropoff_location, dropoff_lat, dropoff_lng, waiting_return,
       ride_datetime, passengers, waiting_minutes, distance_km, ride_duration_minutes, ride_end_datetime,
       estimated_pickup_minutes, fare_amount, currency, status,
       driver_response, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   , [
+      data.customerId || null,
       data.customerNumber,
       data.customerName,
       data.pickupLocation,
@@ -60,6 +61,16 @@ async function listBookings(status) {
   return db.all(`SELECT * FROM bookings ORDER BY created_at DESC`);
 }
 
+async function listBookingsByCustomerId(customerId) {
+  const db = await getDb();
+  return db.all(`SELECT * FROM bookings WHERE customer_id = ? ORDER BY created_at DESC`, [customerId]);
+}
+
+async function listBookingsByPhone(phone) {
+  const db = await getDb();
+  return db.all(`SELECT * FROM bookings WHERE customer_number = ? ORDER BY created_at DESC`, [phone]);
+}
+
 async function setDriverLocation(lat, lng) {
   const db = await getDb();
   const now = new Date().toISOString();
@@ -81,6 +92,8 @@ module.exports = {
   updateBookingStatus,
   getBookingById,
   listBookings,
+  listBookingsByCustomerId,
+  listBookingsByPhone,
   setDriverLocation,
   getDriverLocation
 };

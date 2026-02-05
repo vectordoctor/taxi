@@ -1,6 +1,7 @@
 require("dotenv").config();
 const express = require("express");
 const twilio = require("twilio");
+const session = require("express-session");
 const { parseBookingMessage } = require("./utils/messageParser");
 const { calculateFare } = require("./services/fare");
 const { estimatePickupMinutes } = require("./services/pickupEstimate");
@@ -9,11 +10,14 @@ const { getSettings, updateSettings } = require("./services/settings");
 const { haversineKm } = require("./services/distance");
 const { getOptimalRoute } = require("./services/route");
 const { reverseGeocode } = require("./services/geocode");
+const { ensureSystemUsers, findUserByEmail, findUserById, createUser, verifyPassword } = require("./services/auth");
 const {
   createBooking,
   updateBookingStatus,
   getBookingById,
   listBookings,
+  listBookingsByPhone,
+  listBookingsByCustomerId,
   setDriverLocation,
   getDriverLocation
 } = require("./services/bookings");
@@ -27,10 +31,54 @@ const host = process.env.HOST || (process.env.RENDER ? "0.0.0.0" : "127.0.0.1");
 
 app.use(express.urlencoded({ extended: false }));
 app.use(express.json());
+app.use(session({
+  secret: process.env.SESSION_SECRET || "dev_secret_change_me",
+  resave: false,
+  saveUninitialized: false
+}));
+
+ensureSystemUsers().catch((error) => {
+  console.warn("Failed to ensure system users.", error.message);
+});
+
+app.use(async (req, res, next) => {
+  if (req.session.userId && !req.user) {
+    req.user = await findUserById(req.session.userId);
+  }
+  return next();
+});
 
 function normalizeNumber(value) {
   if (!value) return "";
   return value.replace(/^whatsapp:/, "");
+}
+
+const AUTH_DISABLED = true;
+
+async function requireAuth(req, res, next) {
+  if (AUTH_DISABLED) return next();
+  if (!req.session.userId) {
+    return res.redirect("/login");
+  }
+  req.user = await findUserById(req.session.userId);
+  if (!req.user) {
+    req.session.destroy(() => {});
+    return res.redirect("/login");
+  }
+  return next();
+}
+
+function requireRole(role) {
+  return async (req, res, next) => {
+    if (AUTH_DISABLED) return next();
+    if (!req.session.userId) return res.redirect("/login");
+    const user = await findUserById(req.session.userId);
+    if (!user || user.role !== role) {
+      return res.status(403).type("text/html").send("<h1>Access denied</h1>");
+    }
+    req.user = user;
+    return next();
+  };
 }
 
 function formatFareSummary(fare) {
@@ -288,8 +336,29 @@ app.get("/bookings", async (req, res) => {
   res.json(bookings);
 });
 
+app.get("/api/bookings", async (req, res) => {
+  if (req.query.phone) {
+    const bookings = await listBookingsByPhone(String(req.query.phone));
+    return res.json(bookings);
+  }
+  const bookings = await listBookings(req.query.status);
+  return res.json(bookings);
+});
+
+app.get("/api/bookings/:id", async (req, res) => {
+  const bookingId = Number(req.params.id);
+  const booking = await getBookingById(bookingId);
+  if (!booking) return res.status(404).json({ ok: false });
+  return res.json({ ok: true, booking });
+});
+
 app.get("/admin", (req, res) => {
-  res.type("text/html").send(adminPageHtml());
+  res.redirect("/super-admin");
+});
+
+app.get("/super-admin", requireRole("admin"), async (req, res) => {
+  const settings = await getSettings();
+  res.type("text/html").send(adminPageHtml(settings));
 });
 
 app.get("/", (req, res) => {
@@ -299,35 +368,153 @@ app.get("/", (req, res) => {
       <meta charset="utf-8" />
       <meta name="viewport" content="width=device-width, initial-scale=1" />
       <title>Taxi Booking Server</title>
-      <style>
-        body { font-family: "Work Sans", "Segoe UI", sans-serif; background: #f6f4ef; color: #1b1b1b; padding: 24px; }
-        .card { background: white; padding: 20px; border-radius: 16px; box-shadow: 0 12px 40px rgba(27,27,27,0.08); max-width: 520px; }
-        a { color: #f05a28; font-weight: 600; text-decoration: none; }
-        @media (max-width: 720px) {
-          body { padding: 16px; }
-          .card { padding: 18px; }
-        }
+  <style>
+    :root {
+      --bg: #1f1f1f;
+      --surface: #ffffff;
+      --text: #f5f5f5;
+          --muted: #b9b9b9;
+          --accent: #ffcc00;
+          --accent-ink: #1a1a1a;
+          --shadow: 0 18px 40px rgba(0,0,0,0.35);
+      font-family: "Space Grotesk", "Work Sans", "Segoe UI", sans-serif;
+    }
+        body { margin: 0; background: var(--bg); color: var(--text); padding: 24px 18px 40px; }
+        main { max-width: 900px; margin: 0 auto; }
+        h1 { font-family: "Barlow Condensed", "Space Grotesk", sans-serif; font-style: italic; font-weight: 800; letter-spacing: 0.04em; }
+        .card { background: var(--surface); color: #1b1b1b; padding: 18px; border-radius: 16px; box-shadow: var(--shadow); margin-top: 18px; }
+        a { color: var(--accent); font-weight: 700; text-decoration: none; }
+        .cta { display: inline-flex; padding: 12px 18px; border-radius: 999px; background: var(--accent); color: var(--accent-ink); font-weight: 800; text-decoration: none; }
+        .row { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-top: 14px; }
       </style>
+      <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:ital,wght@0,600;0,700;1,700;1,800&family=Space+Grotesk:wght@400;600;700;800&display=swap" rel="stylesheet">
     </head>
     <body>
-      <div class="card">
-        <h1>Taxi Booking Server</h1>
+      <main>
+        <h1>Taxi Booking</h1>
         <p>Status: running (Mauritius)</p>
-        <p><a href="/admin">Open Admin UI</a></p>
-        <p><a href="/book">Open Booking Form</a></p>
-        <p><a href="/settings">Pricing Settings (Mauritius)</a></p>
-      </div>
+        <div class="card">
+          <div class="row">
+            <a class="cta" href="/book">Book a Ride</a>
+            <a class="cta" href="/my-rides">My Rides</a>
+            <a class="cta" href="/driver-mode">Driver Mode</a>
+            <a class="cta" href="/super-admin">Super Admin</a>
+          </div>
+        </div>
+      </main>
     </body>
   </html>`);
 });
 
-app.get("/book", (req, res) => {
+app.get("/my-rides", (req, res) => {
+  res.type("text/html").send(`<!doctype html>
+  <html lang="en">
+    <head>
+      <meta charset="utf-8" />
+      <meta name="viewport" content="width=device-width, initial-scale=1" />
+      <title>My Rides</title>
+      <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:ital,wght@0,600;0,700;1,700;1,800&family=Space+Grotesk:wght@400;600;700;800&display=swap" rel="stylesheet">
+      <style>
+        :root {
+          --bg: #1f1f1f;
+          --surface: #ffffff;
+          --text: #f5f5f5;
+          --accent: #ffcc00;
+          --accent-ink: #1a1a1a;
+          --shadow: 0 18px 40px rgba(0,0,0,0.35);
+          font-family: "Space Grotesk", "Work Sans", "Segoe UI", sans-serif;
+        }
+        body { font-family: inherit; background: var(--bg); color: var(--text); margin: 0; padding: 20px; }
+        main { max-width: 860px; margin: 0 auto; }
+        h1 { font-family: "Barlow Condensed", "Space Grotesk", sans-serif; font-style: italic; font-weight: 800; letter-spacing: 0.04em; margin: 0; }
+        .home-link { background: var(--accent); color: var(--accent-ink); padding: 10px 16px; border-radius: 999px; text-decoration: none; font-weight: 800; }
+        .card { background: var(--surface); color: #1b1b1b; padding: 18px; border-radius: 16px; box-shadow: var(--shadow); margin-top: 16px; }
+        label { display: block; margin-top: 12px; font-weight: 700; color: #1b1b1b; }
+        input { width: 100%; padding: 12px 14px; border-radius: 12px; border: 1px solid #e0e0e0; font-size: 16px; margin-top: 6px; }
+        button { margin-top: 12px; padding: 12px 18px; border-radius: 999px; border: none; background: var(--accent); color: var(--accent-ink); font-weight: 800; cursor: pointer; width: 100%; }
+        table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 12px; overflow: hidden; }
+        th, td { padding: 10px 12px; border-bottom: 1px solid #eceae4; text-align: left; font-size: 14px; }
+        th { text-transform: uppercase; font-size: 12px; letter-spacing: 0.08em; background: #f5f5f5; }
+        a { color: #1b1b1b; font-weight: 700; text-decoration: none; }
+        .muted { color: #6b6b6b; font-size: 13px; }
+      </style>
+    </head>
+    <body>
+      <main>
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+          <h1>My Rides</h1>
+          <a class="home-link" href="/">Home</a>
+        </div>
+        <div class="card">
+          <label>Enter your phone number</label>
+          <input id="phone" placeholder="+230..." />
+          <button id="load">Load My Rides</button>
+          <p class="muted">We will show your accepted rides and tracking links.</p>
+        </div>
+        <div class="card">
+          <div id="results" class="muted">No rides loaded yet.</div>
+        </div>
+      </main>
+      <script>
+        const phoneInput = document.getElementById('phone');
+        const loadBtn = document.getElementById('load');
+        const results = document.getElementById('results');
+
+        async function loadRides() {
+          const phone = phoneInput.value.trim();
+          if (!phone) {
+            results.textContent = 'Please enter your phone number.';
+            return;
+          }
+          const res = await fetch('/api/bookings?phone=' + encodeURIComponent(phone));
+          const data = await res.json();
+          const accepted = data.filter(b => b.status === 'accepted');
+          if (!accepted.length) {
+            results.textContent = 'No accepted rides found.';
+            return;
+          }
+          results.innerHTML = '<table><thead><tr><th>ID</th><th>Date/Time</th><th>Route</th><th>Track</th></tr></thead><tbody>' +
+            accepted.map(b => '<tr>' +
+              '<td>#' + b.id + '</td>' +
+              '<td>' + new Date(b.ride_datetime).toLocaleString() + '</td>' +
+              '<td>' + b.pickup_location + ' → ' + b.dropoff_location + '</td>' +
+              '<td><a href="/track/' + b.id + '">Track driver</a></td>' +
+            '</tr>').join('') +
+          '</tbody></table>';
+        }
+        loadBtn.addEventListener('click', loadRides);
+      </script>
+    </body>
+  </html>`);
+});
+
+app.get("/book", requireAuth, (req, res) => {
   getSettings()
     .then((settings) => res.type("text/html").send(bookingPageHtml({ maxPassengers: settings.maxPassengers })))
     .catch(() => res.type("text/html").send(bookingPageHtml({ maxPassengers: 4 })));
 });
 
-app.post("/book/submit", async (req, res) => {
+app.get("/signup", (req, res) => {
+  res.status(503).type("text/html").send("<p>Signup is temporarily paused.</p>");
+});
+
+app.post("/signup", (req, res) => {
+  res.status(503).type("text/html").send("<p>Signup is temporarily paused.</p>");
+});
+
+app.get("/login", (req, res) => {
+  res.status(503).type("text/html").send("<p>Login is temporarily paused.</p>");
+});
+
+app.post("/login", (req, res) => {
+  res.status(503).type("text/html").send("<p>Login is temporarily paused.</p>");
+});
+
+app.get("/logout", (req, res) => {
+  res.redirect("/");
+});
+
+app.post("/book/submit", requireAuth, async (req, res) => {
   try {
     const settings = await getSettings();
     const name = String(req.body.name || "").trim();
@@ -480,6 +667,7 @@ app.post("/book/submit", async (req, res) => {
     }
 
     const bookingId = await createBooking({
+      customerId: req.user ? req.user.id : null,
       customerNumber: phone,
       customerName: name,
       pickupLocation: pickupLabel,
@@ -511,17 +699,13 @@ app.post("/book/submit", async (req, res) => {
       bookingId,
       fare,
       pickupMinutes: estimatedPickupMinutes,
-      arrivalTimeIso: estimatedPickupMinutes ? new Date(Date.now() + estimatedPickupMinutes * 60000).toISOString() : null
+      arrivalTimeIso: estimatedPickupMinutes ? new Date(Date.now() + estimatedPickupMinutes * 60000).toISOString() : null,
+      phone
     }));
   } catch (error) {
     console.error(error);
     return res.status(500).type("text/html").send(bookingErrorHtml("Something went wrong. Please try again."));
   }
-});
-
-app.get("/api/bookings", async (req, res) => {
-  const bookings = await listBookings(req.query.status);
-  res.json(bookings);
 });
 
 app.post("/api/route", async (req, res) => {
@@ -564,6 +748,7 @@ app.post("/api/route", async (req, res) => {
       ? `${liveDriver.lat},${liveDriver.lng}`
       : process.env.DEFAULT_DRIVER_ORIGIN;
     let pickupEtaMinutes = null;
+    let driverRoute = null;
     if (driverOrigin) {
       const pickupMetrics = await getRouteMetrics({
         origin: driverOrigin,
@@ -582,6 +767,13 @@ app.post("/api/route", async (req, res) => {
         });
         pickupEtaMinutes = pickupRoute?.durationMinutes || null;
       }
+      const [originLat, originLng] = driverOrigin.split(",").map(Number);
+      driverRoute = await getOptimalRoute({
+        pickupLat: originLat,
+        pickupLng: originLng,
+        dropoffLat: pickupLat,
+        dropoffLng: pickupLng
+      });
     }
 
     const arrivalTime = pickupEtaMinutes ? new Date(Date.now() + pickupEtaMinutes * 60000) : null;
@@ -642,95 +834,19 @@ app.post("/api/route", async (req, res) => {
       dropoffAddress,
       driverLocation: liveDriver?.lat && liveDriver?.lng ? { lat: liveDriver.lat, lng: liveDriver.lng } : null,
       driverAddress,
-      driverStatus
+      driverStatus,
+      driverGeometry: driverRoute?.geometry || null
     });
   } catch (error) {
     return res.json({ ok: false });
   }
 });
 
-app.get("/settings", async (req, res) => {
-  const settings = await getSettings();
-  const saved = req.query.saved === "1";
-  res.type("text/html").send(`<!doctype html>
-  <html lang="en">
-    <head>
-      <meta charset="utf-8" />
-      <meta name="viewport" content="width=device-width, initial-scale=1" />
-      <title>Pricing Settings</title>
-      <style>
-        body { font-family: "Work Sans", "Segoe UI", sans-serif; background: #f6f4ef; color: #1b1b1b; padding: 16px; }
-        .card { background: transparent; padding: 0; border-radius: 0; box-shadow: none; max-width: 720px; margin: 0 auto; }
-        label { display: block; margin-top: 12px; font-weight: 600; }
-        input { width: 100%; padding: 12px 14px; margin-top: 6px; border-radius: 10px; border: 1px solid #dedbd2; font-size: 16px; }
-        button { margin-top: 18px; padding: 12px 18px; border-radius: 999px; border: none; background: #1f2a44; color: white; font-weight: 700; cursor: pointer; width: 100%; }
-        .pill { display: inline-flex; padding: 6px 12px; border-radius: 999px; background: #e6f4ea; color: #1f7a3f; font-weight: 600; font-size: 12px; }
-        a { color: #f05a28; font-weight: 600; text-decoration: none; }
-        @media (max-width: 720px) {
-          body { padding: 16px; }
-        }
-      </style>
-    </head>
-    <body>
-      <div class="card">
-        <h1>Pricing Settings (Mauritius)</h1>
-        ${saved ? '<p class="pill">Saved successfully</p>' : ''}
-        <p><a href="/">Home</a></p>
-        <form method="post" action="/settings">
-          <label>Currency</label>
-          <input name="currency" value="${settings.currency}" required />
-
-          <label>Per KM Price (MUR)</label>
-          <input name="perKm" type="number" step="0.1" value="${settings.perKm}" required />
-
-          <label>Extra Passenger Percent (per passenger)</label>
-          <input name="extraPassengerPercent" type="number" step="0.1" value="${settings.extraPassengerPercent}" required />
-
-          <label>Waiting Price Per Minute (MUR)</label>
-          <input name="waitingPerMinute" type="number" step="0.1" value="${settings.waitingPerMinute}" required />
-
-          <label>Return Trip Multiplier</label>
-          <input name="returnTripMultiplier" type="number" step="0.1" value="${settings.returnTripMultiplier}" required />
-
-          <label>Night (8pm - 6am) Per-KM Increase (%)</label>
-          <input name="nightSurchargePercent" type="number" step="0.1" value="${settings.nightSurchargePercent}" required />
-
-          <label>Max Passengers</label>
-          <input name="maxPassengers" type="number" min="1" max="4" value="${settings.maxPassengers}" required />
-
-          <label>Unavailable Mode</label>
-          <input type="checkbox" name="unavailableMode" value="1" ${settings.unavailableMode ? "checked" : ""} />
-
-          <label>Daily Unavailable Start</label>
-          <input type="time" name="unavailableStart" value="${settings.unavailableStart}" required />
-
-          <label>Daily Unavailable End</label>
-          <input type="time" name="unavailableEnd" value="${settings.unavailableEnd}" required />
-
-          <button type="submit">Save Settings</button>
-        </form>
-      </div>
-    </body>
-  </html>`);
+app.get("/settings", (req, res) => {
+  res.redirect("/super-admin#settings");
 });
 
-app.post("/settings", async (req, res) => {
-  await updateSettings({
-    currency: String(req.body.currency || "MUR").trim(),
-    perKm: Number(req.body.perKm || 0),
-    extraPassengerPercent: Number(req.body.extraPassengerPercent || 0),
-    waitingPerMinute: Number(req.body.waitingPerMinute || 0),
-    returnTripMultiplier: Number(req.body.returnTripMultiplier || 2),
-    nightSurchargePercent: Number(req.body.nightSurchargePercent || 0),
-    maxPassengers: Math.min(4, Number(req.body.maxPassengers || 4)),
-    unavailableMode: req.body.unavailableMode ? "true" : "false",
-    unavailableStart: String(req.body.unavailableStart || "20:00"),
-    unavailableEnd: String(req.body.unavailableEnd || "06:00")
-  });
-  res.redirect("/settings?saved=1");
-});
-
-app.post("/api/bookings/test", async (req, res) => {
+app.post("/api/bookings/test", requireRole("admin"), async (req, res) => {
   const settings = await getSettings();
   const testPickup = process.env.TEST_PICKUP || "123 Main St";
   const testDropoff = process.env.TEST_DROPOFF || "500 Market St";
@@ -766,21 +882,35 @@ app.post("/api/bookings/test", async (req, res) => {
   res.json({ ok: true, id: bookingId });
 });
 
-app.post("/api/bookings/:id/accept", async (req, res) => {
+app.post("/api/bookings/:id/accept", requireRole("admin"), async (req, res) => {
   const bookingId = Number(req.params.id);
   const result = await applyDriverDecision(bookingId, "accept");
   if (!result.ok) return res.status(404).json({ error: result.error });
   return res.json({ ok: true });
 });
 
-app.post("/api/bookings/:id/decline", async (req, res) => {
+app.post("/api/bookings/:id/decline", requireRole("admin"), async (req, res) => {
   const bookingId = Number(req.params.id);
   const result = await applyDriverDecision(bookingId, "decline");
   if (!result.ok) return res.status(404).json({ error: result.error });
   return res.json({ ok: true });
 });
 
-app.post("/driver/location", async (req, res) => {
+app.post("/api/driver/bookings/:id/accept", requireRole("driver"), async (req, res) => {
+  const bookingId = Number(req.params.id);
+  const result = await applyDriverDecision(bookingId, "accept");
+  if (!result.ok) return res.status(404).json({ error: result.error });
+  return res.json({ ok: true });
+});
+
+app.post("/api/driver/bookings/:id/decline", requireRole("driver"), async (req, res) => {
+  const bookingId = Number(req.params.id);
+  const result = await applyDriverDecision(bookingId, "decline");
+  if (!result.ok) return res.status(404).json({ error: result.error });
+  return res.json({ ok: true });
+});
+
+app.post("/driver/location", requireRole("driver"), async (req, res) => {
   const { lat, lng } = req.body;
   if (!Number.isFinite(Number(lat)) || !Number.isFinite(Number(lng))) {
     return res.status(400).json({ error: "lat and lng required" });
@@ -790,11 +920,69 @@ app.post("/driver/location", async (req, res) => {
 });
 
 app.get("/api/driver/location", async (req, res) => {
+  const settings = await getSettings();
+  const isAdmin = (req.user && req.user.role === "admin") || (AUTH_DISABLED && req.query.admin === "1");
+  if (!isAdmin && settings.driverOnline === false) {
+    return res.json({ ok: false });
+  }
   const location = await getDriverLocation();
   if (!location || !location.lat || !location.lng) {
     return res.json({ ok: false });
   }
-  return res.json({ ok: true, ...location });
+  let address = null;
+  if (req.query.includeAddress === "1" || req.query.admin === "1") {
+    try {
+      address = await reverseGeocode(location.lat, location.lng);
+    } catch (error) {
+      address = null;
+    }
+  }
+  return res.json({ ok: true, ...location, address });
+});
+
+app.get("/api/driver/active-booking", requireRole("driver"), async (req, res) => {
+  const accepted = await listBookings("accepted");
+  if (!accepted.length) return res.json({ ok: false });
+  const now = new Date();
+  const sorted = accepted.slice().sort((a, b) => new Date(a.ride_datetime) - new Date(b.ride_datetime));
+  let current = sorted.find((b) => new Date(b.ride_datetime) >= now);
+  if (!current) {
+    current = sorted.find((b) => b.ride_end_datetime && now <= new Date(b.ride_end_datetime));
+  }
+  if (!current) current = sorted[0];
+  if (!current.pickup_lat || !current.pickup_lng) return res.json({ ok: false });
+
+  const driverLocation = await getDriverLocation();
+  if (!driverLocation || !driverLocation.lat || !driverLocation.lng) {
+    return res.json({ ok: false });
+  }
+
+  let route = null;
+  try {
+    route = await getOptimalRoute({
+      pickupLat: driverLocation.lat,
+      pickupLng: driverLocation.lng,
+      dropoffLat: current.pickup_lat,
+      dropoffLng: current.pickup_lng
+    });
+  } catch (error) {
+    route = null;
+  }
+
+  return res.json({
+    ok: true,
+    booking: {
+      id: current.id,
+      customer_name: current.customer_name,
+      pickup_location: current.pickup_location,
+      pickup_lat: current.pickup_lat,
+      pickup_lng: current.pickup_lng,
+      ride_datetime: current.ride_datetime
+    },
+    route: route?.geometry || null,
+    etaMinutes: route?.durationMinutes || null,
+    distanceKm: route?.distanceKm || null
+  });
 });
 
 app.get("/api/driver/eta/:id", async (req, res) => {
@@ -848,11 +1036,269 @@ app.get("/api/driver/status", async (req, res) => {
   return res.json({ ok: true, status: "available" });
 });
 
-app.get("/track/:id", async (req, res) => {
+app.get("/driver", (req, res) => {
+  res.redirect("/driver-mode");
+});
+
+app.get("/driver-mode", requireRole("driver"), (req, res) => {
+  res.type("text/html").send(`<!doctype html>
+  <html lang="en">
+    <head>
+      <meta charset="utf-8" />
+      <meta name="viewport" content="width=device-width, initial-scale=1" />
+      <title>Driver Mode</title>
+      <style>
+        :root {
+          --bg: #1f1f1f;
+          --surface: #ffffff;
+          --text: #f5f5f5;
+          --muted: #b9b9b9;
+          --accent: #ffcc00;
+          --accent-ink: #1a1a1a;
+          --shadow: 0 18px 40px rgba(0,0,0,0.35);
+          font-family: "Space Grotesk", "Work Sans", "Segoe UI", sans-serif;
+        }
+        body { font-family: inherit; background: var(--bg); color: var(--text); margin: 0; padding: 16px; }
+        header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+        h1, h2 { font-family: "Barlow Condensed", "Space Grotesk", sans-serif; font-style: italic; font-weight: 800; letter-spacing: 0.04em; margin: 0; }
+        .home-link { background: var(--accent); color: var(--accent-ink); padding: 10px 16px; border-radius: 999px; text-decoration: none; font-weight: 800; }
+        button { margin-top: 12px; padding: 12px 18px; border-radius: 999px; border: none; background: var(--accent); color: var(--accent-ink); font-weight: 800; cursor: pointer; width: 100%; }
+        button.ghost { background: transparent; border: 1px solid rgba(255,255,255,0.2); color: var(--text); }
+        .pill { display: inline-flex; padding: 6px 12px; border-radius: 999px; background: #111111; color: var(--accent); font-weight: 700; font-size: 12px; margin-top: 8px; }
+        .card { background: var(--surface); color: #1b1b1b; padding: 16px; border-radius: 14px; margin-top: 14px; box-shadow: var(--shadow); }
+        .booking { border-bottom: 1px solid #eceae4; padding: 12px 0; }
+        .booking:last-child { border-bottom: none; }
+        .muted { color: #6b6b6b; font-size: 13px; }
+        .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+        #map { height: 260px; border-radius: 12px; margin-top: 12px; border: 1px solid #dedbd2; }
+      </style>
+      <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:ital,wght@0,600;0,700;1,700;1,800&family=Space+Grotesk:wght@400;600;700;800&display=swap" rel="stylesheet">
+      <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    </head>
+    <body>
+      <header>
+        <h1>Driver Mode</h1>
+        <a href="/" class="home-link">Home</a>
+      </header>
+      <p class="pill" id="status">Sharing location...</p>
+      <button id="share">Use My Current Location (Driver)</button>
+
+      <div class="card">
+        <h2>Pending Bookings</h2>
+        <div id="bookings" class="muted">Loading...</div>
+      </div>
+      <div class="card">
+        <h2>Accepted Ride Route</h2>
+        <div id="activeRide" class="muted">No accepted ride yet.</div>
+        <div id="map"></div>
+      </div>
+      <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+      <script>
+        const statusEl = document.getElementById('status');
+        const shareBtn = document.getElementById('share');
+        const bookingsEl = document.getElementById('bookings');
+        const activeRideEl = document.getElementById('activeRide');
+
+        const map = L.map('map').setView([-20.3484, 57.5522], 11);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+          attribution: '&copy; OpenStreetMap contributors'
+        }).addTo(map);
+        let routeLayer = null;
+        let pickupMarker = null;
+        let driverMarker = null;
+
+        const carIcon = L.icon({
+          iconUrl: 'data:image/svg+xml;utf8,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><path fill="#1f2a44" d="M6 38v-8l6-12a6 6 0 0 1 5-3h30a6 6 0 0 1 5 3l6 12v8a4 4 0 0 1-4 4h-2a6 6 0 0 1-12 0H24a6 6 0 0 1-12 0H10a4 4 0 0 1-4-4z"/><circle cx="20" cy="42" r="5" fill="#f05a28"/><circle cx="44" cy="42" r="5" fill="#f05a28"/></svg>'),
+          iconSize: [26, 26],
+          iconAnchor: [13, 13]
+        });
+        async function sendLocation() {
+          if (!navigator.geolocation) {
+            statusEl.textContent = 'Geolocation not supported';
+            return;
+          }
+          navigator.geolocation.getCurrentPosition(async function (pos) {
+            await fetch('/driver/location', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ lat: pos.coords.latitude, lng: pos.coords.longitude })
+            });
+            statusEl.textContent = 'Location updated at ' + new Date().toLocaleTimeString();
+          }, function () {
+            statusEl.textContent = 'Unable to get location';
+          });
+        }
+
+        async function loadBookings() {
+          const res = await fetch('/api/bookings?status=pending');
+          const data = await res.json();
+          if (!data || !data.length) {
+            bookingsEl.textContent = 'No pending bookings.';
+            return;
+          }
+          bookingsEl.innerHTML = data.map(b => {
+            return '<div class="booking">' +
+              '<div><strong>#' + b.id + '</strong> • ' + new Date(b.ride_datetime).toLocaleString() + '</div>' +
+              '<div class="muted">' + (b.pickup_location || '') + ' → ' + (b.dropoff_location || '') + '</div>' +
+              '<div class="muted">Passengers: ' + b.passengers + ' • Fare: ' + b.currency + ' ' + Number(b.fare_amount).toFixed(2) + '</div>' +
+              '<div class="actions">' +
+                '<button class="ghost" onclick="updateBooking(' + b.id + ', \\'accept\\')">Accept</button>' +
+                '<button class="ghost" onclick="updateBooking(' + b.id + ', \\'decline\\')">Decline</button>' +
+              '</div>' +
+            '</div>';
+          }).join('');
+        }
+
+        async function updateBooking(id, action) {
+          await fetch('/api/driver/bookings/' + id + '/' + action, { method: 'POST' });
+          await loadBookings();
+        }
+
+        async function refreshActiveRide() {
+          const res = await fetch('/api/driver/active-booking');
+          const data = await res.json();
+          if (!data || !data.ok) {
+            activeRideEl.textContent = 'No accepted ride yet.';
+            if (routeLayer) { map.removeLayer(routeLayer); routeLayer = null; }
+            if (pickupMarker) { map.removeLayer(pickupMarker); pickupMarker = null; }
+            return;
+          }
+          const b = data.booking;
+          activeRideEl.innerHTML = '<div><strong>#' + b.id + '</strong> • ' + (b.customer_name || 'Customer') + '</div>' +
+            '<div class="muted">Pickup: ' + (b.pickup_location || 'GPS pin') + '</div>' +
+            (data.etaMinutes ? '<div class="muted">ETA to pickup: ' + data.etaMinutes + ' min</div>' : '');
+          if (b.pickup_lat && b.pickup_lng) {
+            if (pickupMarker) map.removeLayer(pickupMarker);
+            pickupMarker = L.marker([b.pickup_lat, b.pickup_lng]).addTo(map).bindPopup('Pickup');
+          }
+          if (data.route) {
+            if (routeLayer) map.removeLayer(routeLayer);
+            routeLayer = L.geoJSON(data.route, { color: '#1f6feb', weight: 4 }).addTo(map);
+            map.fitBounds(routeLayer.getBounds(), { padding: [20, 20] });
+          }
+        }
+
+        async function refreshDriverMarker() {
+          const res = await fetch('/api/driver/location?admin=1');
+          const data = await res.json();
+          if (!data || !data.ok) return;
+          const latlng = [data.lat, data.lng];
+          if (!driverMarker) {
+            driverMarker = L.marker(latlng, { icon: carIcon }).addTo(map).bindPopup('Driver');
+          } else {
+            driverMarker.setLatLng(latlng);
+          }
+        }
+
+        window.updateBooking = updateBooking;
+        shareBtn.addEventListener('click', sendLocation);
+        setInterval(sendLocation, 15000);
+        setInterval(loadBookings, 10000);
+        setInterval(refreshActiveRide, 10000);
+        setInterval(refreshDriverMarker, 5000);
+        sendLocation();
+        loadBookings();
+        refreshActiveRide();
+        refreshDriverMarker();
+      </script>
+    </body>
+  </html>`);
+});
+
+app.get("/my-bookings", requireAuth, async (req, res) => {
+  const bookings = await listBookingsByCustomerId(req.user.id);
+  const rows = bookings.map((b) => {
+    const status = b.status;
+    const trackLink = status === "accepted" ? `<a href="/track/${b.id}">Track driver</a>` : "";
+    return `<tr>
+      <td>#${b.id}</td>
+      <td>${new Date(b.ride_datetime).toLocaleString()}</td>
+      <td>${status}</td>
+      <td>${trackLink}</td>
+    </tr>`;
+  }).join("");
+  res.type("text/html").send(`<!doctype html>
+  <html lang="en">
+    <head>
+      <meta charset="utf-8" />
+      <meta name="viewport" content="width=device-width, initial-scale=1" />
+      <title>My Bookings</title>
+      <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:ital,wght@0,600;0,700;1,700;1,800&family=Space+Grotesk:wght@400;600;700;800&display=swap" rel="stylesheet">
+      <style>
+        :root {
+          --bg: #1f1f1f;
+          --surface: #ffffff;
+          --text: #f5f5f5;
+          --accent: #ffcc00;
+          --accent-ink: #1a1a1a;
+          --shadow: 0 18px 40px rgba(0,0,0,0.35);
+          font-family: "Space Grotesk", "Work Sans", "Segoe UI", sans-serif;
+        }
+        body { font-family: inherit; background: var(--bg); color: var(--text); margin: 0; padding: 20px; }
+        main { max-width: 820px; margin: 0 auto; }
+        h1 { font-family: "Barlow Condensed", "Space Grotesk", sans-serif; font-style: italic; font-weight: 800; letter-spacing: 0.04em; }
+        .home-link { background: var(--accent); color: var(--accent-ink); padding: 10px 16px; border-radius: 999px; text-decoration: none; font-weight: 800; }
+        table { width: 100%; border-collapse: collapse; background: var(--surface); border-radius: 12px; overflow: hidden; box-shadow: var(--shadow); }
+        th, td { padding: 10px 12px; border-bottom: 1px solid #eceae4; text-align: left; font-size: 14px; }
+        th { text-transform: uppercase; font-size: 12px; letter-spacing: 0.08em; background: #f5f5f5; }
+        a { color: var(--accent); font-weight: 700; text-decoration: none; }
+      </style>
+    </head>
+    <body>
+      <main>
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+        <h1>My Bookings</h1>
+        <a class="home-link" href="/">Home</a>
+      </div>
+      <p><a href="/book">Book a ride</a></p>
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Date/Time</th>
+            <th>Status</th>
+            <th>Track</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows || '<tr><td colspan="4">No bookings yet.</td></tr>'}
+        </tbody>
+      </table>
+      </main>
+    </body>
+  </html>`);
+});
+
+app.get("/api/settings", requireRole("admin"), async (req, res) => {
+  const settings = await getSettings();
+  res.json(settings);
+});
+
+app.post("/api/settings", requireRole("admin"), async (req, res) => {
+  await updateSettings({
+    currency: String(req.body.currency || "MUR").trim(),
+    perKm: Number(req.body.perKm || 0),
+    extraPassengerPercent: Number(req.body.extraPassengerPercent || 0),
+    waitingPerMinute: Number(req.body.waitingPerMinute || 0),
+    returnTripMultiplier: Number(req.body.returnTripMultiplier || 2),
+    nightSurchargePercent: Number(req.body.nightSurchargePercent || 0),
+    maxPassengers: Math.min(4, Number(req.body.maxPassengers || 4)),
+    unavailableMode: req.body.unavailableMode ? "true" : "false",
+    unavailableStart: String(req.body.unavailableStart || "20:00"),
+    unavailableEnd: String(req.body.unavailableEnd || "06:00"),
+    driverOnline: req.body.driverOnline ? "true" : "false"
+  });
+  res.json({ ok: true });
+});
+
+app.get("/track/:id", requireAuth, async (req, res) => {
   const bookingId = Number(req.params.id);
   const booking = await getBookingById(bookingId);
   if (!booking) {
     return res.status(404).type("text/html").send("<h1>Booking not found</h1>");
+  }
+  if (!AUTH_DISABLED && req.user.role === "customer" && booking.customer_id && booking.customer_id !== req.user.id) {
+    return res.status(403).type("text/html").send("<h1>Access denied</h1>");
   }
   res.type("text/html").send(`<!doctype html>
   <html lang="en">
@@ -860,22 +1306,40 @@ app.get("/track/:id", async (req, res) => {
       <meta charset="utf-8" />
       <meta name="viewport" content="width=device-width, initial-scale=1" />
       <title>Track Driver</title>
+      <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:ital,wght@0,600;0,700;1,700;1,800&family=Space+Grotesk:wght@400;600;700;800&display=swap" rel="stylesheet">
       <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
       <style>
-        body { font-family: "Work Sans", "Segoe UI", sans-serif; background: #f6f4ef; color: #1b1b1b; padding: 32px; }
-        .card { background: white; padding: 24px; border-radius: 16px; box-shadow: 0 12px 40px rgba(27,27,27,0.08); max-width: 720px; margin: 0 auto; }
+        :root {
+          --bg: #1f1f1f;
+          --surface: #ffffff;
+          --text: #f5f5f5;
+          --accent: #ffcc00;
+          --accent-ink: #1a1a1a;
+          --shadow: 0 18px 40px rgba(0,0,0,0.35);
+          font-family: "Space Grotesk", "Work Sans", "Segoe UI", sans-serif;
+        }
+        body { font-family: inherit; background: var(--bg); color: var(--text); margin: 0; padding: 24px 16px 48px; }
+        main { max-width: 820px; margin: 0 auto; }
+        h1 { font-family: "Barlow Condensed", "Space Grotesk", sans-serif; font-style: italic; font-weight: 800; letter-spacing: 0.04em; margin: 0; }
+        .home-link { background: var(--accent); color: var(--accent-ink); padding: 10px 16px; border-radius: 999px; text-decoration: none; font-weight: 800; }
+        .card { background: var(--surface); color: #1b1b1b; padding: 18px; border-radius: 16px; box-shadow: var(--shadow); margin-top: 14px; }
         #trackMap { height: 360px; border-radius: 12px; border: 1px solid #dedbd2; margin-top: 12px; }
-        .pill { display: inline-flex; padding: 6px 12px; border-radius: 999px; background: #fdf3ee; color: #b34622; font-weight: 600; font-size: 12px; margin-top: 8px; }
+        .pill { display: inline-flex; padding: 6px 12px; border-radius: 999px; background: #111111; color: var(--accent); font-weight: 700; font-size: 12px; margin-top: 8px; }
       </style>
     </head>
     <body>
-      <div class="card">
+      <main>
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
         <h1>Track Your Driver</h1>
+        <a class="home-link" href="/">Home</a>
+      </div>
+      <div class="card">
         <p>Booking #${bookingId} (${booking.status})</p>
         <div id="trackMap"></div>
         <div class="pill" id="status">Waiting for driver location...</div>
         <div class="pill" id="eta">ETA: --</div>
       </div>
+      </main>
       <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
       <script>
         const map = L.map('trackMap').setView([-20.3484, 57.5522], 11);
