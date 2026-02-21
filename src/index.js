@@ -28,6 +28,7 @@ const { bookingPageHtml, bookingResultHtml, bookingErrorHtml } = require("./rout
 const app = express();
 const port = process.env.PORT || 3000;
 const host = process.env.HOST || (process.env.RENDER ? "0.0.0.0" : "127.0.0.1");
+const APP_VERSION = "1.0";
 
 app.use(express.urlencoded({ extended: false }));
 app.use(express.json());
@@ -392,6 +393,7 @@ app.get("/", (req, res) => {
     <body>
       <main>
         <h1>Taxi Booking</h1>
+        <p>Version v${APP_VERSION}</p>
         <p>Status: running (Mauritius)</p>
         <div class="card">
           <div class="row">
@@ -428,6 +430,7 @@ app.get("/my-rides", (req, res) => {
         main { max-width: 860px; margin: 0 auto; }
         h1 { font-family: "Barlow Condensed", "Space Grotesk", sans-serif; font-style: italic; font-weight: 800; letter-spacing: 0.04em; margin: 0; }
         .home-link { background: var(--accent); color: var(--accent-ink); padding: 10px 16px; border-radius: 999px; text-decoration: none; font-weight: 800; }
+        .version-badge { display: inline-flex; align-items: center; justify-content: center; background: #2a2a2a; color: #ffcc00; border: 1px solid rgba(255, 204, 0, 0.45); padding: 6px 10px; border-radius: 999px; font-size: 12px; font-weight: 800; letter-spacing: 0.04em; }
         .card { background: var(--surface); color: #1b1b1b; padding: 18px; border-radius: 16px; box-shadow: var(--shadow); margin-top: 16px; }
         label { display: block; margin-top: 12px; font-weight: 700; color: #1b1b1b; }
         input { width: 100%; padding: 12px 14px; border-radius: 12px; border: 1px solid #e0e0e0; font-size: 16px; margin-top: 6px; }
@@ -443,7 +446,8 @@ app.get("/my-rides", (req, res) => {
       <main>
         <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
           <h1>My Rides</h1>
-          <a class="home-link" href="/">Home</a>
+          <span class="version-badge">v${APP_VERSION}</span>
+        <a class="home-link" href="/">Home</a>
         </div>
         <div class="card">
           <label>Enter your phone number</label>
@@ -1078,6 +1082,7 @@ app.get("/driver-mode", requireRole("driver"), (req, res) => {
     <body>
       <header>
         <h1>Driver Mode</h1>
+        <span class="version-badge">v${APP_VERSION}</span>
         <a href="/" class="home-link">Home</a>
       </header>
       <p class="pill" id="status">Sharing location...</p>
@@ -1248,7 +1253,8 @@ app.get("/my-bookings", requireAuth, async (req, res) => {
       <main>
       <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
         <h1>My Bookings</h1>
-        <a class="home-link" href="/">Home</a>
+        <span class="version-badge">v${APP_VERSION}</span>
+          <a class="home-link" href="/">Home</a>
       </div>
       <p><a href="/book">Book a ride</a></p>
       <table>
@@ -1331,7 +1337,8 @@ app.get("/track/:id", requireAuth, async (req, res) => {
       <main>
       <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
         <h1>Track Your Driver</h1>
-        <a class="home-link" href="/">Home</a>
+        <span class="version-badge">v${APP_VERSION}</span>
+          <a class="home-link" href="/">Home</a>
       </div>
       <div class="card">
         <p>Booking #${bookingId} (${booking.status})</p>

@@ -56,6 +56,25 @@ function bookingPageHtml(options) {
       text-decoration: none;
       font-weight: 800;
     }
+    .version-badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      background: #2a2a2a;
+      color: #ffcc00;
+      border: 1px solid rgba(255, 204, 0, 0.45);
+      padding: 6px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: 0.04em;
+    }
+    .header-actions {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
     .ghost {
       margin-top: 12px; padding: 12px 18px; border-radius: 999px; border: 1px solid #2d2d2d;
       background: transparent; color: #2d2d2d; font-weight: 700; cursor: pointer; width: 100%;
@@ -85,7 +104,10 @@ function bookingPageHtml(options) {
         <h1>Book a Ride</h1>
         <p>Set your pickup and dropoff pins first. We will confirm after driver approval.</p>
       </div>
-      <a class="home-link" href="/">Home</a>
+      <div class="header-actions">
+        <span class="version-badge">v1.0</span>
+        <a class="home-link" href="/">Home</a>
+      </div>
     </div>
     <form method="post" action="/book/submit">
       <div id="step1">
@@ -509,13 +531,18 @@ function bookingResultHtml({ bookingId, fare, pickupMinutes, arrivalTimeIso, pho
     h1, h2 { font-family: "Barlow Condensed", "Space Grotesk", sans-serif; font-style: italic; font-weight: 800; letter-spacing: 0.04em; }
     .pill { display: inline-flex; padding: 6px 12px; border-radius: 999px; background: #111111; color: var(--accent); font-weight: 700; font-size: 12px; }
     .home-link { background: var(--accent); color: var(--accent-ink); padding: 10px 16px; border-radius: 999px; text-decoration: none; font-weight: 800; }
+    .version-badge { display: inline-flex; align-items: center; justify-content: center; background: #2a2a2a; color: #ffcc00; border: 1px solid rgba(255, 204, 0, 0.45); padding: 6px 10px; border-radius: 999px; font-size: 12px; font-weight: 800; letter-spacing: 0.04em; }
+    .header-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
   </style>
 </head>
 <body>
   <main data-phone="${phone || ""}">
     <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
       <h1>Booking Submitted</h1>
-      <a class="home-link" href="/">Home</a>
+      <div class="header-actions">
+        <span class="version-badge">v1.0</span>
+        <a class="home-link" href="/">Home</a>
+      </div>
     </div>
     <div class="card">
       <p>Your request #${bookingId} is pending driver approval.</p>
@@ -594,13 +621,18 @@ function bookingErrorHtml(message) {
     a { color: var(--accent); text-decoration: none; font-weight: 700; }
     h1 { font-family: "Barlow Condensed", "Space Grotesk", sans-serif; font-style: italic; font-weight: 800; letter-spacing: 0.04em; }
     .home-link { background: var(--accent); color: var(--accent-ink); padding: 10px 16px; border-radius: 999px; text-decoration: none; font-weight: 800; }
+    .version-badge { display: inline-flex; align-items: center; justify-content: center; background: #2a2a2a; color: #ffcc00; border: 1px solid rgba(255, 204, 0, 0.45); padding: 6px 10px; border-radius: 999px; font-size: 12px; font-weight: 800; letter-spacing: 0.04em; }
+    .header-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
   </style>
 </head>
 <body>
   <main>
     <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
       <h1>Booking Error</h1>
-      <a class="home-link" href="/">Home</a>
+      <div class="header-actions">
+        <span class="version-badge">v1.0</span>
+        <a class="home-link" href="/">Home</a>
+      </div>
     </div>
     <p>${message}</p>
     <p><a href="/book">Back to booking form</a></p>

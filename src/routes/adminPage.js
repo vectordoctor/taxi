@@ -52,6 +52,24 @@ function adminPageHtml(settings) {
       text-decoration: none;
       font-weight: 700;
     }
+    .version-badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      background: #2a2a2a;
+      color: #ffcc00;
+      border: 1px solid rgba(255, 204, 0, 0.45);
+      padding: 6px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: 0.04em;
+    }
+    .header-actions {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
     main {
       padding: 24px 24px 48px;
     }
@@ -124,6 +142,7 @@ function adminPageHtml(settings) {
       border-radius: var(--radius);
       overflow: hidden;
       box-shadow: var(--shadow);
+      table-layout: fixed;
     }
     th, td {
       padding: 12px 14px;
@@ -132,6 +151,7 @@ function adminPageHtml(settings) {
       font-size: 14px;
       vertical-align: top;
       color: #1b1b1b;
+      width: 14.285%;
     }
     th {
       background: #f5f5f5;
@@ -177,6 +197,7 @@ function adminPageHtml(settings) {
     .calendar-date {
       font-weight: 700;
       margin-bottom: 8px;
+      color: #1b1b1b;
     }
     .calendar-row {
       display: grid;
@@ -200,6 +221,14 @@ function adminPageHtml(settings) {
       margin-right: 6px;
       margin-top: 6px;
     }
+    .day-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 10px;
+      flex-wrap: wrap;
+    }
     #driverMap { height: 240px; border-radius: 14px; border: 1px solid rgba(255,255,255,0.12); margin: 12px 0 18px; }
     @media (max-width: 900px) {
       header { padding: 20px; }
@@ -222,7 +251,10 @@ function adminPageHtml(settings) {
         <h1>Super Admin</h1>
         <p>Manage rides, pricing, and availability.</p>
       </div>
-      <a class="home-link" href="/">Home</a>
+      <div class="header-actions">
+        <span class="version-badge">v1.0</span>
+        <a class="home-link" href="/">Home</a>
+      </div>
     </div>
   </header>
   <main>
@@ -234,19 +266,20 @@ function adminPageHtml(settings) {
     <section id="tab-rides">
     <div class="toolbar">
       <button class="primary" id="refresh">Refresh</button>
-      <button class="ghost" id="createTest">Create Test Booking</button>
-      <select id="statusFilter">
-        <option value="">All</option>
-        <option value="pending">Pending</option>
-        <option value="accepted">Accepted</option>
-        <option value="declined">Declined</option>
-        <option value="completed">Completed</option>
-      </select>
       <span id="updated"></span>
       <span class="pill" id="driverLive">Driver location: --</span>
     </div>
+    <div class="calendar-card">
+      <div class="day-header">
+        <div class="calendar-date">Daily Earnings (Last & Next 3 Weeks)</div>
+        <div style="display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end;">
+          <div class="badge" id="chartRange">--</div>
+          <div class="badge" id="monthEarnings">Month: --</div>
+        </div>
+      </div>
+      <canvas id="earningsChart" height="140" aria-label="Daily earnings chart" role="img"></canvas>
+    </div>
     <div id="driverMap"></div>
-    <div id="calendar"></div>
     <div id="tableWrap"></div>
     <div class="pill" id="todayEarnings">Today earnings: --</div>
     </section>
@@ -296,18 +329,18 @@ function adminPageHtml(settings) {
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script>
     const tableWrap = document.getElementById('tableWrap');
-    const statusFilter = document.getElementById('statusFilter');
     const updated = document.getElementById('updated');
     const refreshBtn = document.getElementById('refresh');
-    const createTestBtn = document.getElementById('createTest');
     const driverLive = document.getElementById('driverLive');
-    const calendar = document.getElementById('calendar');
     const tabs = document.querySelectorAll('.tab-btn');
     const tabRides = document.getElementById('tab-rides');
     const tabSettings = document.getElementById('tab-settings');
     const settingsForm = document.getElementById('settingsForm');
     const saveStatus = document.getElementById('saveStatus');
     const todayEarnings = document.getElementById('todayEarnings');
+    const chartCanvas = document.getElementById('earningsChart');
+    const chartRange = document.getElementById('chartRange');
+    const monthEarnings = document.getElementById('monthEarnings');
     const driverMap = L.map('driverMap').setView([-20.3484, 57.5522], 11);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       attribution: '&copy; OpenStreetMap contributors'
@@ -315,13 +348,11 @@ function adminPageHtml(settings) {
     let driverMarker = null;
 
     async function fetchBookings() {
-      const status = statusFilter.value;
-      const url = status ? '/api/bookings?status=' + encodeURIComponent(status) : '/api/bookings';
-      const res = await fetch(url);
+      const res = await fetch('/api/bookings?status=accepted');
       const data = await res.json();
       renderTable(data);
       renderEarnings(data);
-      renderCalendar(data.filter(b => b.status === 'accepted'));
+      renderChart(data);
       updated.textContent = 'Updated ' + new Date().toLocaleTimeString();
     }
 
@@ -332,42 +363,50 @@ function adminPageHtml(settings) {
         tableWrap.innerHTML = '<div class="empty">No bookings to show.</div>';
         return;
       }
-      const rows = bookings.map(function (b) {
-        return '<tr>' +
-          '<td data-label="ID">#' + b.id + '</td>' +
-          '<td data-label="Status"><span class="status ' + b.status + '">' + b.status + '</span></td>' +
-          '<td data-label="Customer">' + (b.customer_name || '') + '<br/>' + b.customer_number + '</td>' +
-          '<td data-label="Pickup">' + b.pickup_location + '</td>' +
-          '<td data-label="Dropoff">' + b.dropoff_location + '</td>' +
-          '<td data-label="Date/Time" class="muted-text">' + new Date(b.ride_datetime).toLocaleString() + '</td>' +
-          '<td data-label="Pax">' + b.passengers + '</td>' +
-          '<td data-label="Fare">' + b.currency + ' ' + Number(b.fare_amount).toFixed(2) + '</td>' +
-          '<td data-label="Fare Earn">' + b.currency + ' ' + Number(b.fare_amount).toFixed(2) + '</td>' +
-          '<td data-label="Pickup ETA">' + b.estimated_pickup_minutes + ' min</td>' +
-          '<td data-label="Return">' + (b.waiting_return ? 'Yes' : 'No') + '</td>' +
-        '</tr>';
+      const groups = {};
+      bookings.forEach(b => {
+        const dateKey = new Date(b.ride_datetime).toDateString();
+        if (!groups[dateKey]) groups[dateKey] = [];
+        groups[dateKey].push(b);
+      });
+      const orderedDates = Object.keys(groups).sort((a, b) => new Date(a) - new Date(b));
+      const sections = orderedDates.map(dateKey => {
+        const dayBookings = groups[dateKey].sort((a, b) => new Date(a.ride_datetime) - new Date(b.ride_datetime));
+        const currency = dayBookings.find(b => b.currency)?.currency || 'MUR';
+        const dayTotal = dayBookings.reduce((sum, b) => sum + Number(b.fare_amount || 0), 0);
+        const rows = dayBookings.map(function (b) {
+          return '<tr>' +
+            '<td data-label="Customer">' + (b.customer_name || '') + '<br/>' + b.customer_number + '</td>' +
+            '<td data-label="Pickup">' + b.pickup_location + '</td>' +
+            '<td data-label="Dropoff">' + b.dropoff_location + '</td>' +
+            '<td data-label="Date/Time" class="muted-text">' + new Date(b.ride_datetime).toLocaleString() + '</td>' +
+            '<td data-label="Pax">' + b.passengers + '</td>' +
+            '<td data-label="Fare">' + b.currency + ' ' + Number(b.fare_amount).toFixed(2) + '</td>' +
+            '<td data-label="Fare Earn">' + b.currency + ' ' + Number(b.fare_amount).toFixed(2) + '</td>' +
+          '</tr>';
+        }).join('');
+        return '<div class="calendar-card">' +
+          '<div class="day-header">' +
+            '<div class="calendar-date">' + dateKey + '</div>' +
+            '<div class="badge">Day Earnings: ' + currency + ' ' + dayTotal.toFixed(2) + '</div>' +
+          '</div>' +
+          '<table>' +
+            '<thead>' +
+              '<tr>' +
+                '<th>Customer</th>' +
+                '<th>Pickup</th>' +
+                '<th>Dropoff</th>' +
+                '<th>Date/Time</th>' +
+                '<th>Pax</th>' +
+                '<th>Fare</th>' +
+                '<th>Fare Earn</th>' +
+              '</tr>' +
+            '</thead>' +
+            '<tbody>' + rows + '</tbody>' +
+          '</table>' +
+        '</div>';
       }).join('');
-
-      tableWrap.innerHTML = '<table>' +
-        '<thead>' +
-          '<tr>' +
-            '<th>ID</th>' +
-            '<th>Status</th>' +
-            '<th>Customer</th>' +
-            '<th>Pickup</th>' +
-            '<th>Dropoff</th>' +
-            '<th>Date/Time</th>' +
-            '<th>Pax</th>' +
-            '<th>Fare</th>' +
-            '<th>Fare Earn</th>' +
-            '<th>Pickup ETA</th>' +
-            '<th>Return</th>' +
-          '</tr>' +
-        '</thead>' +
-        '<tbody>' +
-          rows +
-        '</tbody>' +
-      '</table>';
+      tableWrap.innerHTML = sections;
     }
 
     function renderEarnings(bookings) {
@@ -379,55 +418,87 @@ function adminPageHtml(settings) {
       todayEarnings.textContent = 'Today earnings: ' + currency + ' ' + total.toFixed(2);
     }
 
-    function renderCalendar(bookings) {
-      if (!bookings.length) {
-        calendar.innerHTML = '<div class="empty">No accepted rides yet.</div>';
-        return;
-      }
-      const groups = {};
+    function renderChart(bookings) {
+      const ctx = chartCanvas.getContext('2d');
+      const today = new Date();
+      const start = new Date(today);
+      start.setDate(start.getDate() - 21);
+      const end = new Date(today);
+      end.setDate(end.getDate() + 21);
+      chartRange.textContent = start.toLocaleDateString() + ' → ' + end.toLocaleDateString();
+
+      const totals = {};
+      const monthTotals = {};
       bookings.forEach(b => {
-        const date = new Date(b.ride_datetime).toLocaleDateString();
-        const start = new Date(b.ride_datetime).toLocaleTimeString();
-        const end = b.ride_end_datetime ? new Date(b.ride_end_datetime).toLocaleTimeString() : '--';
-        if (!groups[date]) groups[date] = [];
-        groups[date].push({
-          id: b.id,
-          start,
-          end,
-          pickup: b.pickup_location,
-          dropoff: b.dropoff_location,
-          distanceKm: b.distance_km,
-          fareAmount: b.fare_amount,
-          currency: b.currency || 'MUR'
-        });
+        const d = new Date(b.ride_datetime);
+        const key = d.toDateString();
+        totals[key] = (totals[key] || 0) + Number(b.fare_amount || 0);
+        const monthKey = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+        monthTotals[monthKey] = (monthTotals[monthKey] || 0) + Number(b.fare_amount || 0);
+      });
+      const labels = [];
+      const values = [];
+      const cursor = new Date(start);
+      while (cursor <= end) {
+        const key = cursor.toDateString();
+        labels.push(cursor.toLocaleDateString());
+        values.push(totals[key] || 0);
+        cursor.setDate(cursor.getDate() + 1);
+      }
+
+      const maxVal = Math.max(10, ...values);
+      const w = chartCanvas.width = chartCanvas.parentElement.clientWidth - 10;
+      const h = chartCanvas.height = 140;
+      ctx.clearRect(0, 0, w, h);
+      ctx.fillStyle = '#111111';
+      ctx.fillRect(0, 0, w, h);
+
+      const padding = 18;
+      const innerW = w - padding * 2;
+      const innerH = h - padding * 2;
+      const stepX = innerW / Math.max(1, values.length - 1);
+
+      ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+      ctx.beginPath();
+      ctx.moveTo(padding, h - padding);
+      ctx.lineTo(w - padding, h - padding);
+      ctx.stroke();
+
+      ctx.strokeStyle = '#ffcc00';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      values.forEach((val, i) => {
+        const x = padding + i * stepX;
+        const y = h - padding - (val / maxVal) * innerH;
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+
+      ctx.fillStyle = '#ffcc00';
+      values.forEach((val, i) => {
+        const x = padding + i * stepX;
+        const y = h - padding - (val / maxVal) * innerH;
+        ctx.beginPath();
+        ctx.arc(x, y, 2.5, 0, Math.PI * 2);
+        ctx.fill();
       });
 
-      const cards = Object.keys(groups).map(date => {
-        const rows = groups[date].map(item =>
-          '<div class="calendar-row">' +
-            '<div class="calendar-time">#' + item.id + ' • ' + item.start + ' - ' + item.end + '</div>' +
-            '<div class="calendar-loc">' + item.pickup + ' → ' + item.dropoff + '</div>' +
-            '<div>' +
-              '<span class="badge">' + (item.distanceKm || 0).toFixed(2) + ' km</span>' +
-              '<span class="badge">' + item.currency + ' ' + Number(item.fareAmount || 0).toFixed(2) + '</span>' +
-            '</div>' +
-          '</div>'
-        ).join('');
-        return '<div class="calendar-card">' +
-          '<div class="calendar-date">' + date + '</div>' +
-          rows +
-        '</div>';
-      }).join('');
+      ctx.fillStyle = '#f5f5f5';
+      ctx.font = '10px "Space Grotesk", sans-serif';
+      values.forEach((_, i) => {
+        if (i % 7 !== 0) return;
+        const x = padding + i * stepX;
+        const label = labels[i].slice(0, 5);
+        ctx.fillText(label, x - 10, h - 4);
+      });
 
-      calendar.innerHTML = '<h2 class="calendar-title">Accepted Rides Calendar</h2>' + cards;
+      const monthKey = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0');
+      const monthTotal = monthTotals[monthKey] || 0;
+      monthEarnings.textContent = 'Month: ' + (bookings.find(b => b.currency)?.currency || 'MUR') + ' ' + monthTotal.toFixed(2);
     }
 
     refreshBtn.addEventListener('click', fetchBookings);
-    statusFilter.addEventListener('change', fetchBookings);
-    createTestBtn.addEventListener('click', async function () {
-      await fetch('/api/bookings/test', { method: 'POST' });
-      await fetchBookings();
-    });
 
     async function refreshDriverLive() {
       const res = await fetch('/api/driver/location?admin=1&includeAddress=1');
